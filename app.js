@@ -3,6 +3,8 @@
 
 const STORAGE_KEY = 'workshop-todos';
 const THEME_KEY = 'workshop-theme';
+const filterKey = 'workshop-filter';
+const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
 
 // 取得畫面上會用到的元素
 const form = document.getElementById('todo-form');
@@ -14,13 +16,29 @@ const filterButtons = document.querySelectorAll('.btn-filter');
 const themeToggle = document.getElementById('theme-toggle');
 const themeIcon = document.getElementById('theme-icon');
 const themeLabel = document.getElementById('theme-label');
+const statusMessage = document.getElementById('status-message');
+const clearCompleted = document.getElementById('clear-completed');
 
 // 所有待辦事項都放在這個陣列裡
 // 每一筆的格式:{ id: '169...', text: '買牛奶', completed: false }
 let todos = loadTodos();
 
 // 目前的篩選條件:'all' | 'active' | 'completed'
-let currentFilter = 'all';
+const savedFilter = readPreference(filterKey);
+let currentFilter = ['all', 'active', 'completed'].includes(savedFilter) ? savedFilter : 'all';
+
+// 瀏覽器停用儲存時仍可操作，並明確告知使用者。
+function readPreference(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function writePreference(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    statusMessage.textContent = '瀏覽器無法儲存資料，重新整理後可能遺失本次變更。';
+  }
+}
 
 // ---------- 資料存取 ----------
 
@@ -29,7 +47,9 @@ function loadTodos() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     const parsed = saved ? JSON.parse(saved) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter((todo) => todo &&
+      typeof todo.id === 'string' && typeof todo.text === 'string' &&
+      typeof todo.completed === 'boolean') : [];
   } catch (error) {
     console.warn('讀取待辦清單失敗,將以空清單開始。', error);
     return [];
@@ -38,7 +58,7 @@ function loadTodos() {
 
 /** 把目前的待辦清單寫回 localStorage */
 function saveTodos() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+  writePreference(STORAGE_KEY, JSON.stringify(todos));
 }
 
 // ---------- 深色模式 ----------
@@ -61,7 +81,7 @@ function applyTheme(theme) {
  * 使用者選過就聽使用者的,沒選過就跟隨作業系統設定。
  */
 function initTheme() {
-  const savedTheme = localStorage.getItem(THEME_KEY);
+  const savedTheme = readPreference(THEME_KEY);
 
   if (savedTheme === 'light' || savedTheme === 'dark') {
     applyTheme(savedTheme);
@@ -136,6 +156,7 @@ function render() {
   // 更新未完成數量(不受篩選影響,永遠是整體數量)
   const remaining = todos.filter((todo) => !todo.completed).length;
   remainingCount.textContent = `未完成:${remaining} 項`;
+  clearCompleted.disabled = !todos.some((todo) => todo.completed);
 }
 
 // ---------- 操作行為 ----------
@@ -147,6 +168,8 @@ function createId() {
 
 /** 新增一筆待辦 */
 function addTodo(text) {
+  // 新增的事項未完成，切回全部以便立即看見。
+  if (currentFilter === 'completed') setFilter('all');
   todos.push({
     id: createId(),
     text,
@@ -158,6 +181,8 @@ function addTodo(text) {
 
 /** 切換某一筆待辦的完成狀態 */
 function toggleTodo(id) {
+  statusMessage.textContent = currentFilter === 'all' ? '' :
+    '完成狀態已更新；項目只是被目前篩選條件隱藏，並未刪除。切換「全部」即可查看。';
   todos = todos.map((todo) =>
     todo.id === id ? { ...todo, completed: !todo.completed } : todo
   );
@@ -175,6 +200,7 @@ function deleteTodo(id) {
 /** 切換篩選條件 */
 function setFilter(filter) {
   currentFilter = filter;
+  writePreference(filterKey, filter);
 
   filterButtons.forEach((button) => {
     const isActive = button.dataset.filter === filter;
@@ -222,9 +248,20 @@ filterButtons.forEach((button) => {
 themeToggle.addEventListener('click', () => {
   const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   applyTheme(nextTheme);
-  localStorage.setItem(THEME_KEY, nextTheme);
+  writePreference(THEME_KEY, nextTheme);
+});
+
+systemTheme.addEventListener('change', () => initTheme());
+
+clearCompleted.addEventListener('click', () => {
+  if (!todos.some((todo) => todo.completed)) return;
+  if (!window.confirm('確定要清除所有已完成事項嗎？此操作無法復原。')) return;
+  todos = todos.filter((todo) => !todo.completed);
+  statusMessage.textContent = '已清除所有已完成事項。';
+  saveTodos();
+  render();
 });
 
 // 頁面載入時先套用主題並畫一次清單
 initTheme();
-render();
+setFilter(currentFilter);
